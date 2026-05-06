@@ -22,3 +22,24 @@ algo fácil para explotarlo.
 - Se valorarán las implicaciones sociales, ecológicas y sostenibles de las propues-
 tas.
 - Se recomienda el uso de herramientas IA para todos los aspectos del trabajo.
+
+
+***CLONAR PROYECTO EN PC***
+Acceder con credenciales:
+```bash
+git config --global user.name "Tu Nombre"
+git config --global user.email "tu-email@ejemplo.com"
+```
+Clonar repo:
+```bash
+git clone https://github.com/usuario/ADC_SEM
+```
+Entrar en rama:
+```bash
+cd ADC_SEM
+```
+Crear nueva rama para trabajar:
+```bash
+git checkout -b nombre-de-tu-rama
+```
+
