@@ -25,6 +25,7 @@ tas.
 
 
 ***CLONAR PROYECTO EN PC***
+
 Acceder con credenciales:
 ```bash
 git config --global user.name "Tu Nombre"
