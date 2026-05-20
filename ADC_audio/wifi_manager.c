@@ -7,10 +7,10 @@ static const char *TAG = "MQTT_MOD";
 static esp_mqtt_client_handle_t client;
 
 // --- CONFIGURACIÓN MQTT ---
-#define MQTT_BROKER_URL "mqtt://io.adafruit.com" // Ejemplo con Adafruit IO
-#define MQTT_USERNAME   "TU_USUARIO_ADAFRUIT"
-#define MQTT_PASSWORD   "TU_AIO_KEY"
-#define MQTT_TOPIC      "TU_USUARIO/feeds/ruido-db"
+#define MQTT_BROKER_URL "broker.emqx.io"
+#define MQTT_USERNAME   "sem_adc"
+#define MQTT_PASSWORD   "sem_adc"
+#define MQTT_TOPIC      "sem_adc/proyecto/rachetas"
 
 // Manejador de eventos de MQTT (conexión, desconexión, etc.)
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {

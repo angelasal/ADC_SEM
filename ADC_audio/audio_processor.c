@@ -1,8 +1,9 @@
 // audio_processor.c
 #include "esp_adc/adc_continuous.h"
-#include "esp_dsp.h" // Librería de procesamiento de señales de Espressif
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/task.h"
+#include "esp_log.h"
 #include <math.h>
 
 // Definimos la frecuencia de muestreo (Fs). 
@@ -12,6 +13,7 @@
 #define READ_LEN 1024        // Tamaño del buffer para el procesamiento
 
 static adc_continuous_handle_t adc_handle = NULL;
+static const char *TAG = "AUDIO_MOD";
 
 // Función para inicializar el ADC en modo continuo (DMA)
 void audio_init(void) {
@@ -45,23 +47,45 @@ void audio_init(void) {
 void audio_task(void *pvParameters) {
     uint8_t result[READ_LEN];
     uint32_t ret_num = 0;
-    QueueHandle_t data_queue = (QueueHandle_t)pvParameters; // Cola para enviar datos al WiFi
+    QueueHandle_t data_queue = (QueueHandle_t)pvParameters; 
 
-    adc_continuous_start(adc_handle); // Arrancamos el motor de captura
+    adc_continuous_start(adc_handle); 
 
     while (1) {
-        // Leemos el bloque de datos que el DMA ha llenado
         if (adc_continuous_read(adc_handle, result, READ_LEN, &ret_num, 0) == ESP_OK) {
-            float sum_sq = 0;
+            
+            // Transformamos el formato de bytes crudos a formato ADC de Espressif
+            adc_continuous_data_t *parsed_data = (adc_continuous_data_t *)result;
             int count = ret_num / SOC_ADC_DIGI_RESULT_BYTES;
             
-            // Aquí se calcularía el volumen (RMS) antes de enviarlo
-            float volume_db = 20 * log10(sum_sq / count); 
+            float sum_sq = 0;
             
-            // Enviamos el dato a la cola para que el módulo WiFi lo exporte 
+            // 1. Recorremos todas las muestras de audio
+            for (int i = 0; i < count; i++) {
+                int raw_val = parsed_data[i].raw_data;
+                
+                // 2. Quitamos el valor continuo (DC offset). 
+                // El micro suele estar en ~2048 (la mitad de 4095). Nos importa la variación (onda).
+                float ac_val = raw_val - 2048.0f; 
+                sum_sq += (ac_val * ac_val);
+            }
+            
+            // 3. Calculamos la Raíz Cuadrada de la Media de los Cuadrados (RMS)
+            float rms = sqrt(sum_sq / count);
+            
+            // 4. Pasamos a Decibelios (evitando hacer logaritmo de 0)
+            float volume_db = 0;
+            if (rms > 0) {
+                volume_db = 20 * log10(rms); 
+            }
+            
+            // Enviamos el dato a la cola. El wifi_manager lo convertirá a Plain Text y lo subirá a MQTT
             xQueueSend(data_queue, &volume_db, portMAX_DELAY);
         }
-        vTaskDelay(pdMS_TO_TICKS(100)); // Pausa para no saturar el procesador
+        
+        // Pausa para no saturar MQTT enviando miles de mensajes. 100ms = 10 mensajes por segundo.
+        // Si tu broker gratuito te bloquea por enviar muy rápido, súbelo a 500 (pdMS_TO_TICKS(500))
+        vTaskDelay(pdMS_TO_TICKS(100)); 
     }
 }
 
