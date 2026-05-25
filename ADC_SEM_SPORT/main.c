@@ -1,44 +1,49 @@
-// main.c
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
-
-// Importamos las cabeceras de tus módulos
 #include "audio_processor.h"
-#include "serial_manager.h" // ¡Cambiado! Ahora incluimos el gestor del puerto serie
+#include "serial_manager.h"
+
+
+#define QUEUE_LENGTH        10               // Capacidad máxima de la cola
+#define ITEM_SIZE           sizeof(float)    // Tamaño de cada elemento
+#define AUDIO_TASK_STACK    4096             // Tamaño de la pila para procesar la IA
+#define SERIAL_TASK_STACK   4096             // Tamaño de la pila para enviar los datos
+#define AUDIO_TASK_PRIO     5                // Prioridad alta para no perder muestras de audio
+#define SERIAL_TASK_PRIO    4                // Prioridad menor para las comunicaciones
 
 static const char *TAG = "MAIN_SYSTEM";
 
-void app_main(void) {
-    // NOTA: Hemos eliminado la inicialización de NVS (nvs_flash) 
-    // ya que el puerto serie no necesita memoria no volátil para arrancar.
+void app_main(void) 
+{
+    QueueHandle_t data_queue = NULL;
 
-    ESP_LOGI(TAG, "Iniciando Sistema de Monitorización Acústica por Puerto Serie...");
+    ESP_LOGI(TAG, "Iniciando sistema detector...");
 
-    // 2. CREAR LA COLA (Comunicación entre módulos)
-    /* Creamos una cola para pasar los niveles de dB del audio al puerto serie.
-       Esto permite que el audio siga midiendo en tiempo real mientras la UART transmite. */
-    QueueHandle_t audio_to_serial_queue = xQueueCreate(10, sizeof(float));
+    serial_init();
+    audio_init();
 
-    if (audio_to_serial_queue == NULL) {
-        ESP_LOGE(TAG, "Error al crear la cola de datos");
-        return;
+    data_queue = xQueueCreate(QUEUE_LENGTH, ITEM_SIZE);
+    
+    if (data_queue == NULL) 
+    {
+        ESP_LOGE(TAG, "Error: No se puede asignar memoria para la cola.");
+        return; // BARR-C prohíbe usar saltos bruscos como abort(), salimos de forma segura
     }
 
-    // 3. INICIALIZAR HARDWARE
-    audio_init();   // Configura el ADC continuo y DMA en el audio_processor.c
-    serial_init();  // ¡Cambiado! Configura el puerto UART en serial_manager.c
+    // 4. Creación de las tareas, inyectándoles el 'handle' de la cola
+    if (xTaskCreate(audio_task, "audio_task", AUDIO_TASK_STACK, (void *)data_queue, AUDIO_TASK_PRIO, NULL) != pdPASS)
+    {
+        ESP_LOGE(TAG, "Error: No se puede crear audio_task");
+    }
 
-    // 4. LANZAR TAREAS (Multiprocesamiento con FreeRTOS)
-    /* Lanzamos las tareas de forma independiente para que el muestreo del ADC 
-       no sufra retrasos por los tiempos de transmisión de la UART. */
-    
-    // Tarea de Audio: Prioridad alta (5) para asegurar el ritmo de muestreo
-    xTaskCreate(audio_task, "Audio_Task", 4096, audio_to_serial_queue, 5, NULL);
+    if (xTaskCreate(serial_task, "serial_task", SERIAL_TASK_STACK, (void *)data_queue, SERIAL_TASK_PRIO, NULL) != pdPASS)
+    {
+        ESP_LOGE(TAG, "Error: No se puede crear serial_task");
+    }
 
-    // Tarea de Serie: Prioridad media/alta (5) para escupir los datos al PC
-    xTaskCreate(serial_task, "Serial_Task", 4096, audio_to_serial_queue, 5, NULL);
-
-    ESP_LOGI(TAG, "Tareas de audio y transmisión serie lanzadas correctamente.");
+    // main puede terminar aquí, las tareas en segundo plano siguen
+    ESP_LOGI(TAG, "Funcionando con éxito, main finaliza.");
 }

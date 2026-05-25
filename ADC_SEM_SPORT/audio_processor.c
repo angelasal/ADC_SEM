@@ -15,90 +15,76 @@
 // Por tanto, el tamaño del buffer en bytes será: 1024 * 4 = 4096 bytes.
 #define READ_LEN       (MAX_SAMPLES * SOC_ADC_DIGI_RESULT_BYTES) 
 
+#define MIC_PIN         GPIO_NUM_4
+#define MIC_ADC_UNIT    ADC_UNIT_1    // Obligatorio usar ADC 1 para no pisar el Wi-Fi
+#define MIC_ADC_CHANNEL ADC_CHANNEL_3 // El canal 3 del ADC1 corresponde al GPIO4
+
 static adc_continuous_handle_t adc_handle = NULL;
 
 // Función para inicializar el ADC en modo continuo (DMA)
 void audio_init(void) {
-    
-    // 1. AJUSTE DE BUFFER: Configuración segura para evitar desbordamientos del DMA.
-    // max_store_buf_size debe ser mayor que (conv_frame_size * 2 + 4). Usamos el doble (8KB).
     adc_continuous_handle_cfg_t adc_config = {
-        .max_store_buf_size = READ_LEN * 2, 
-        .conv_frame_size = READ_LEN,        // 4096 bytes (Equivale exactamente a 1024 muestras)
+        .max_store_buf_size = 1024,
+        .conv_frame_size = READ_LEN,
     };
     ESP_ERROR_CHECK(adc_continuous_new_handle(&adc_config, &adc_handle));
 
-    // Definimos cómo va a leer: Frecuencia de 16kHz y modo de una sola unidad (ADC1).
+    adc_digi_pattern_config_t adc_pattern = {0};
+    adc_pattern.atten = ADC_ATTEN_DB_12; 
+    adc_pattern.channel = MIC_ADC_CHANNEL; // Usamos el canal 3
+    adc_pattern.unit = MIC_ADC_UNIT;       // Usamos la unidad 1
+    adc_pattern.bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
+
     adc_continuous_config_t dig_cfg = {
         .sample_freq_hz = SAMPLE_FREQ_HZ,
-        .conv_mode = ADC_CONV_SINGLE_UNIT_1,
+        .conv_mode = ADC_CONV_SINGLE_UNIT_1, // Solo la unidad 1 configurada
+        .format = ADC_DIGI_OUTPUT_FORMAT_TYPE1,
     };
     
-    // 2. AJUSTE CRÍTICO (Soluciona el reinicio RTC_SW_CPU_RST): 
-    // Añadimos 'static' para que la estructura no se destruya al salir de esta función
-    // y el HAL no intente leer basura de la pila de memoria.
-    static adc_digi_pattern_config_t pattern = {
-        .atten = ADC_ATTEN_DB_12,               // Capta hasta ~3.1V
-        .channel = ADC_CHANNEL_2 & 0x7,         // GPIO 3 en ESP32-S3
-        .unit = ADC_UNIT_1,
-        .bit_width = SOC_ADC_DIGI_MAX_BITWIDTH, // 12 bits de resolución
-    };
-    
+    dig_cfg.adc_pattern = &adc_pattern;
     dig_cfg.pattern_num = 1;
-    dig_cfg.adc_pattern = &pattern; 
     
     ESP_ERROR_CHECK(adc_continuous_config(adc_handle, &dig_cfg));
+    ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
 }
 
 // Tarea que calcula el volumen promedio (RMS) para detectar ruido
-void audio_task(void *pvParameters) {
-    // CAMBIO CRÍTICO: Sacamos 'result' de la pila haciéndolo 'static'. 
-    // Evita consumir 4KB de stack en cada iteración del bucle.
+void audio_task(void *pvParameters) 
+{
+    // BARR-C: Variables estáticas e inicializadas al principio
     static uint8_t result[READ_LEN]; 
     uint32_t ret_num = 0;
-    QueueHandle_t data_queue = (QueueHandle_t)pvParameters; // Cola para enviar datos al WiFi
+    float nivel_confianza_ia = 0.0f;
+    QueueHandle_t data_queue = (QueueHandle_t)pvParameters;
 
-    adc_continuous_start(adc_handle); // Arrancamos el motor de captura
+    if (data_queue == NULL) 
+    {
+        return; // Salida segura si la cola no se pasó correctamente
+    }
 
-    while (1) {
-        // Leemos el bloque completo de datos (4096 bytes). 
-        if (adc_continuous_read(adc_handle, result, READ_LEN, &ret_num, pdMS_TO_TICKS(50)) == ESP_OK) {
-            
-            // CAMBIO CRÍTICO: 'static' evita reservar otros 4KB en la pila de la tarea.
-            // Protege la memoria del sistema operativo y evita corromper el heap del WiFi.
-            static adc_continuous_data_t parsed_data[MAX_SAMPLES];
-            uint32_t num_parsed = 0;
-            
-            // TRADUCCIÓN: Pasamos los bytes crudos a datos legibles
-            adc_continuous_parse_data(adc_handle, result, ret_num, parsed_data, &num_parsed);
+    for (;;) 
+    {
+        // 1. Aquí leerías los datos del ADC continuo (simulado o real)
+        // adc_continuous_read(adc_handle, result, READ_LEN, &ret_num, portMAX_DELAY);
 
-            float sum_sq = 0;
-            
-            // CÁLCULO RMS (num_parsed será igual a 1024 si el buffer se llenó por completo)
-            for (int i = 0; i < num_parsed; i++) {
-                int raw_val = parsed_data[i].raw_data;
-                float ac_val = raw_val - 2048.0f; // Quitamos el offset de continua (silencio)
-                sum_sq += (ac_val * ac_val);
-            }
-            
-            float rms = 0;
-            if (num_parsed > 0) {
-                rms = sqrt(sum_sq / num_parsed);
-            }
-            
-            // PROTECCIÓN MATEMÁTICA: Evitamos el log10(0)
-            float volume_db = 0;
-            if (rms > 1.0f) { 
-                volume_db = 20 * log10(rms); 
-            }
-            printf("RMS: %.2f, dB: %.2f\n", rms, volume_db);
-            xQueueSend(data_queue, &volume_db, portMAX_DELAY);
-        }
+        // 2. Procesamiento de la señal (Inteligencia Artificial / FFT)
+        // procesar_fourier((float*)result, MAX_SAMPLES);
         
-        vTaskDelay(pdMS_TO_TICKS(10)); 
+        // Simulamos que la IA ha detectado un llanto con un 85.5% de seguridad
+        nivel_confianza_ia = 85.5f; 
+
+        // 3. Enviar el resultado a la cola
+        // xQueueSend devuelve pdTRUE si tiene éxito o falso si la cola está llena [3]
+        if (xQueueSend(data_queue, &nivel_confianza_ia, 0) != pdTRUE) 
+        {
+            // BARR-C: Controlar el error si la cola se satura
+            // ESP_LOGW("AUDIO", "Advertencia: La cola está llena, alerta descartada.");
+        }
+
+        // Un pequeño retardo para ceder la CPU si no estamos bloqueando en la lectura del ADC
+        vTaskDelay(100 / portTICK_PERIOD_MS); 
     }
 }
-
 void procesar_fourier(float* muestras, int n) {
     // 1. Inicializamos las tablas de la FFT (admite hasta 1024 puntos)
     esp_err_t ret = dsps_fft2r_init_fc32(NULL, 1024);
